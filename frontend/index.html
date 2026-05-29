@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Docs — Multi-Agent Pipeline</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ["Inter", "system-ui", "sans-serif"] },
+          colors: {
+            surface: "#ffffff",
+            border: "#e5e7eb",
+            muted: "#6b7280",
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: "Inter", system-ui, sans-serif; background: #f9fafb; color: #111827; }
+
+    /* Prose */
+    .prose h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .prose h2 { font-size: 1.15rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.25rem; }
+    .prose h3 { font-size: 1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.25rem; }
+    .prose p { margin-bottom: 0.75rem; line-height: 1.65; color: #374151; }
+    .prose code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 4px; font-size: 0.82em; font-family: "Fira Code", monospace; }
+    .prose pre { background: #1f2937; color: #f9fafb; padding: 1rem; border-radius: 8px; overflow-x: auto; margin: 1rem 0; }
+    .prose pre code { background: none; padding: 0; color: inherit; }
+    .prose ul { list-style: disc; padding-left: 1.5rem; margin-bottom: 0.75rem; }
+    .prose ol { list-style: decimal; padding-left: 1.5rem; margin-bottom: 0.75rem; }
+    .prose li { margin-bottom: 0.25rem; color: #374151; }
+    .prose strong { font-weight: 600; color: #111827; }
+    .prose blockquote { border-left: 3px solid #d1d5db; padding-left: 1rem; color: #6b7280; font-style: italic; margin: 1rem 0; }
+
+    /* Skeleton */
+    .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e8e8e8 50%, #f0f0f0 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 6px; }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+    /* Tabs */
+    .tab-btn { padding: 0.625rem 0; font-size: 0.8125rem; border-bottom: 2px solid transparent; color: #6b7280; transition: all 0.15s; white-space: nowrap; }
+    .tab-btn:hover { color: #374151; }
+    .tab-btn.active { border-bottom-color: #111827; color: #111827; font-weight: 500; }
+
+    /* Mode toggle */
+    .mode-btn { font-size: 0.8125rem; padding: 0.375rem 0.875rem; border-radius: 6px; transition: all 0.15s; font-weight: 500; }
+    .mode-btn.active { background: #111827; color: #fff; }
+    .mode-btn.inactive { color: #6b7280; }
+    .mode-btn.inactive:hover { color: #374151; background: #f3f4f6; }
+
+    /* Agent steps */
+    .step-item { display: flex; align-items: flex-start; gap: 0.75rem; padding: 0.625rem 0; }
+    .step-icon { width: 1.5rem; height: 1.5rem; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-top: 0.05rem; }
+    .step-icon.pending { background: #f3f4f6; }
+    .step-icon.running { background: #fef9c3; }
+    .step-icon.done { background: #dcfce7; }
+    .step-icon.error { background: #fee2e2; }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin 0.8s linear infinite; }
+
+    /* Pulse dot for running state */
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .pulse { animation: pulse 1.2s ease-in-out infinite; }
+
+    /* Result card */
+    .result-stat { text-align: center; }
+    .result-stat .value { font-size: 1.5rem; font-weight: 600; color: #111827; }
+    .result-stat .label { font-size: 0.75rem; color: #6b7280; margin-top: 0.125rem; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+  <!-- Header -->
+  <header class="border-b border-gray-200 bg-white sticky top-0 z-10">
+    <div class="max-w-4xl mx-auto px-6 py-4 flex items-center gap-4">
+      <div class="flex-1">
+        <h1 class="text-base font-semibold text-gray-900 tracking-tight">AI Docs</h1>
+        <p class="text-xs text-gray-400 mt-0.5">Multi-agent documentation pipeline · AWS Bedrock</p>
+      </div>
+      <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+        <button class="mode-btn active" id="mode-single" onclick="setMode('single')">Single File</button>
+        <button class="mode-btn inactive" id="mode-pipeline" onclick="setMode('pipeline')">Pipeline</button>
+      </div>
+      <span id="status-badge" class="hidden text-xs px-2.5 py-1 rounded-full font-medium"></span>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-8 space-y-6">
+
+    <!-- Input card -->
+    <div class="bg-white border border-gray-200 rounded-xl p-6">
+      <div class="space-y-4">
+        <div>
+          <label for="file-path" class="block text-sm font-medium text-gray-700 mb-1.5">Source file path</label>
+          <input id="file-path" type="text" placeholder="sample_code/example.py" value="sample_code/example.py"
+            class="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition bg-white placeholder-gray-400 font-mono" />
+          <p class="mt-1.5 text-xs text-gray-400">Relative to the project root</p>
+        </div>
+
+        <!-- Pipeline description (shown in pipeline mode) -->
+        <div id="pipeline-desc" class="hidden rounded-lg bg-gray-50 border border-gray-200 p-3 text-xs text-gray-600 leading-relaxed">
+          Runs four agents sequentially:
+          <span class="font-medium text-gray-800">GitAgent</span> → git history &amp; diff analysis &nbsp;·&nbsp;
+          <span class="font-medium text-gray-800">TicketAgent</span> → engineering ticket &nbsp;·&nbsp;
+          <span class="font-medium text-gray-800">DocsAgent</span> → API documentation &nbsp;·&nbsp;
+          <span class="font-medium text-gray-800">WriterAgent</span> → final assembled report
+        </div>
+
+        <button id="run-btn" onclick="run()"
+          class="w-full bg-gray-900 hover:bg-gray-700 text-white text-sm font-medium py-2.5 px-4 rounded-lg transition-colors duration-150 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+          <span id="btn-text">Generate Documentation</span>
+          <svg id="btn-spinner" class="hidden spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Skeleton -->
+    <div id="skeleton" class="hidden bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+      <div class="skeleton h-4" style="width:40%"></div>
+      <div class="skeleton h-3" style="width:100%"></div>
+      <div class="skeleton h-3" style="width:80%"></div>
+      <div class="skeleton h-3" style="width:66%"></div>
+      <div class="skeleton h-3 mt-4" style="width:100%"></div>
+      <div class="skeleton h-3" style="width:75%"></div>
+    </div>
+
+    <!-- Pipeline progress panel (pipeline mode only) -->
+    <div id="pipeline-progress" class="hidden bg-white border border-gray-200 rounded-xl p-6">
+      <p class="text-sm font-medium text-gray-900 mb-4">Pipeline progress</p>
+      <div id="steps-list" class="divide-y divide-gray-100"></div>
+      <!-- Stats row (filled after completion) -->
+      <div id="pipeline-stats" class="hidden mt-5 pt-5 border-t border-gray-100 grid grid-cols-3 gap-4">
+        <div class="result-stat">
+          <div class="value" id="stat-time">—</div>
+          <div class="label">Total time (s)</div>
+        </div>
+        <div class="result-stat">
+          <div class="value" id="stat-steps">4</div>
+          <div class="label">Agents run</div>
+        </div>
+        <div class="result-stat">
+          <div class="value" id="stat-status">—</div>
+          <div class="label">Status</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Single-mode output card -->
+    <div id="output-card" class="hidden bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div class="flex border-b border-gray-200 px-6 pt-4 gap-4 overflow-x-auto">
+        <button onclick="switchTab('preview')" id="tab-preview" class="tab-btn active">Preview</button>
+        <button onclick="switchTab('raw')" id="tab-raw" class="tab-btn">Raw Markdown</button>
+        <div class="flex-1 min-w-0"></div>
+        <button id="copy-btn" onclick="copyTab()" class="hidden text-xs text-gray-500 hover:text-gray-900 pb-3 flex items-center gap-1 transition-colors">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+          </svg>
+          Copy
+        </button>
+      </div>
+      <div id="panel-preview" class="p-6 prose max-w-none text-sm"></div>
+      <div id="panel-raw" class="hidden p-6">
+        <textarea id="raw-content" readonly class="w-full h-96 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-4 resize-none focus:outline-none text-gray-700"></textarea>
+      </div>
+    </div>
+
+    <!-- Pipeline output card (pipeline mode) -->
+    <div id="pipeline-output" class="hidden bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div class="flex border-b border-gray-200 px-6 pt-4 gap-4 overflow-x-auto">
+        <button onclick="switchPipelineTab('ticket')" id="ptab-ticket" class="tab-btn active">Ticket</button>
+        <button onclick="switchPipelineTab('git')" id="ptab-git" class="tab-btn">Git Summary</button>
+        <button onclick="switchPipelineTab('docs')" id="ptab-docs" class="tab-btn">Documentation</button>
+        <button onclick="switchPipelineTab('report')" id="ptab-report" class="tab-btn">Final Report</button>
+        <div class="flex-1 min-w-0"></div>
+        <button id="pcopy-btn" onclick="copyPipelineTab()" class="hidden text-xs text-gray-500 hover:text-gray-900 pb-3 flex items-center gap-1 transition-colors">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+          </svg>
+          Copy
+        </button>
+      </div>
+      <div id="ppanel-ticket" class="p-6 prose max-w-none text-sm"></div>
+      <div id="ppanel-git" class="hidden p-6 prose max-w-none text-sm"></div>
+      <div id="ppanel-docs" class="hidden p-6 prose max-w-none text-sm"></div>
+      <div id="ppanel-report" class="hidden p-6 prose max-w-none text-sm"></div>
+    </div>
+
+    <!-- Error card -->
+    <div id="error-card" class="hidden bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700"></div>
+
+  </main>
+
+  <footer class="border-t border-gray-200 mt-16 py-6 text-center text-xs text-gray-400">
+    Powered by AWS Bedrock · Strands Agents · FastAPI
+  </footer>
+
+  <script>
+    var mode = "single";
+    var rawDoc = "";
+    var currentTab = "preview";
+    var pipelineData = null;
+    var currentPipelineTab = "ticket";
+
+    // ── Mode switching ────────────────────────────────────────────────────────
+
+    function setMode(m) {
+      mode = m;
+      document.getElementById("mode-single").className = "mode-btn " + (m === "single" ? "active" : "inactive");
+      document.getElementById("mode-pipeline").className = "mode-btn " + (m === "pipeline" ? "active" : "inactive");
+      document.getElementById("pipeline-desc").classList.toggle("hidden", m !== "pipeline");
+      document.getElementById("btn-text").textContent = m === "pipeline" ? "Run Pipeline" : "Generate Documentation";
+      resetOutput();
+    }
+
+    function resetOutput() {
+      ["output-card", "pipeline-output", "pipeline-progress", "skeleton", "error-card"].forEach(id => {
+        document.getElementById(id).classList.add("hidden");
+      });
+      document.getElementById("pipeline-stats").classList.add("hidden");
+      document.getElementById("steps-list").innerHTML = "";
+    }
+
+    // ── Main run ──────────────────────────────────────────────────────────────
+
+    async function run() {
+      var filePath = document.getElementById("file-path").value.trim();
+      if (!filePath) return;
+      resetOutput();
+      setLoading(true);
+      setStatus("Running…", "bg-yellow-100 text-yellow-800");
+
+      if (mode === "pipeline") {
+        await runPipeline(filePath);
+      } else {
+        await runSingle(filePath);
+      }
+    }
+
+    // ── Single-file mode ──────────────────────────────────────────────────────
+
+    async function runSingle(filePath) {
+      document.getElementById("skeleton").classList.remove("hidden");
+      try {
+        var res = await fetch("/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file_path: filePath })
+        });
+        if (!res.ok) { var e = await res.json(); throw new Error(e.detail || "HTTP " + res.status); }
+        var data = await res.json();
+        rawDoc = data.doc;
+        document.getElementById("panel-preview").innerHTML = marked.parse(rawDoc);
+        document.getElementById("raw-content").value = rawDoc;
+        document.getElementById("skeleton").classList.add("hidden");
+        document.getElementById("output-card").classList.remove("hidden");
+        setStatus("Done", "bg-green-100 text-green-800");
+        setTimeout(function() { setStatus("", ""); }, 3000);
+      } catch(err) {
+        document.getElementById("skeleton").classList.add("hidden");
+        showError(err.message);
+        setStatus("Failed", "bg-red-100 text-red-700");
+        setTimeout(function() { setStatus("", ""); }, 4000);
+      } finally { setLoading(false); }
+    }
+
+    // ── Pipeline mode ─────────────────────────────────────────────────────────
+
+    var PIPELINE_AGENTS = [
+      { key: "git",    label: "GitAgent",    desc: "Analysing git history & diff…" },
+      { key: "ticket", label: "TicketAgent", desc: "Generating engineering ticket…" },
+      { key: "docs",   label: "DocsAgent",   desc: "Writing API documentation…" },
+      { key: "report", label: "WriterAgent", desc: "Assembling final report…" },
+    ];
+
+    function renderSteps(activeIdx) {
+      var list = document.getElementById("steps-list");
+      list.innerHTML = "";
+      PIPELINE_AGENTS.forEach(function(agent, i) {
+        var status = i < activeIdx ? "done" : (i === activeIdx ? "running" : "pending");
+        var icon = iconFor(status);
+        var nameColor = status === "running" ? "text-gray-900 font-medium" : (status === "done" ? "text-gray-700" : "text-gray-400");
+        var desc = status === "running" ? agent.desc : (status === "done" ? "Completed" : "Waiting…");
+        list.innerHTML += '<div class="step-item">'
+          + '<div class="step-icon ' + status + '">' + icon + '</div>'
+          + '<div><p class="text-sm ' + nameColor + '">' + agent.label + '</p>'
+          + '<p class="text-xs text-gray-400 mt-0.5">' + desc + '</p></div>'
+          + '</div>';
+      });
+    }
+
+    function renderStepsFromResult(steps) {
+      var list = document.getElementById("steps-list");
+      list.innerHTML = "";
+      steps.forEach(function(step) {
+        var icon = iconFor(step.status);
+        var nameColor = step.status === "error" ? "text-red-600" : "text-gray-800";
+        var desc = step.status === "done"
+          ? "Completed in " + step.elapsed_seconds + "s"
+          : (step.status === "error" ? "Error: " + step.output.slice(0, 80) : step.status);
+        list.innerHTML += '<div class="step-item">'
+          + '<div class="step-icon ' + step.status + '">' + icon + '</div>'
+          + '<div><p class="text-sm font-medium ' + nameColor + '">' + step.name + '</p>'
+          + '<p class="text-xs text-gray-400 mt-0.5">' + desc + '</p></div>'
+          + '</div>';
+      });
+    }
+
+    function iconFor(status) {
+      if (status === "done")    return '<svg class="w-3 h-3 text-green-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>';
+      if (status === "running") return '<div class="w-2 h-2 rounded-full bg-yellow-500 pulse"></div>';
+      if (status === "error")   return '<svg class="w-3 h-3 text-red-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v5a1 1 0 002 0V5zm-1 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>';
+      return '<div class="w-2 h-2 rounded-full bg-gray-300"></div>';
+    }
+
+    async function runPipeline(filePath) {
+      var progress = document.getElementById("pipeline-progress");
+      progress.classList.remove("hidden");
+      renderSteps(0);
+
+      // Animate steps while waiting for the response
+      var stepIdx = 0;
+      var stepTimers = PIPELINE_AGENTS.map(function(_, i) {
+        return setTimeout(function() { renderSteps(i); }, i * 8000);
+      });
+
+      try {
+        var res = await fetch("/pipeline", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file_path: filePath })
+        });
+        stepTimers.forEach(clearTimeout);
+
+        if (!res.ok) { var e = await res.json(); throw new Error(e.detail || "HTTP " + res.status); }
+        var data = await res.json();
+        pipelineData = data;
+
+        renderStepsFromResult(data.steps);
+
+        var allDone = data.steps.every(function(s) { return s.status === "done"; });
+        document.getElementById("stat-time").textContent = data.elapsed_seconds;
+        document.getElementById("stat-steps").textContent = data.steps.length;
+        document.getElementById("stat-status").textContent = allDone ? "All done" : "Partial";
+        document.getElementById("pipeline-stats").classList.remove("hidden");
+
+        // Fill pipeline output tabs
+        document.getElementById("ppanel-ticket").innerHTML = marked.parse(data.ticket || "_No output_");
+        document.getElementById("ppanel-git").innerHTML    = marked.parse(data.git_summary || "_No output_");
+        document.getElementById("ppanel-docs").innerHTML   = marked.parse(data.documentation || "_No output_");
+        document.getElementById("ppanel-report").innerHTML = marked.parse(data.final_report || "_No output_");
+
+        document.getElementById("pipeline-output").classList.remove("hidden");
+        document.getElementById("pcopy-btn").classList.remove("hidden");
+
+        setStatus("Done", "bg-green-100 text-green-800");
+        setTimeout(function() { setStatus("", ""); }, 3000);
+      } catch(err) {
+        stepTimers.forEach(clearTimeout);
+        showError(err.message);
+        setStatus("Failed", "bg-red-100 text-red-700");
+        setTimeout(function() { setStatus("", ""); }, 4000);
+      } finally { setLoading(false); }
+    }
+
+    // ── Tab switching ─────────────────────────────────────────────────────────
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.getElementById("panel-preview").classList.toggle("hidden", tab !== "preview");
+      document.getElementById("panel-raw").classList.toggle("hidden", tab !== "raw");
+      ["preview", "raw"].forEach(function(t) {
+        document.getElementById("tab-" + t).className = "tab-btn" + (t === tab ? " active" : "");
+      });
+      document.getElementById("copy-btn").classList.toggle("hidden", tab !== "raw");
+    }
+
+    var PIPELINE_TABS = ["ticket", "git", "docs", "report"];
+
+    function switchPipelineTab(tab) {
+      currentPipelineTab = tab;
+      PIPELINE_TABS.forEach(function(t) {
+        document.getElementById("ppanel-" + t).classList.toggle("hidden", t !== tab);
+        document.getElementById("ptab-" + t).className = "tab-btn" + (t === tab ? " active" : "");
+      });
+    }
+
+    // ── Copy ──────────────────────────────────────────────────────────────────
+
+    async function copyTab() {
+      await navigator.clipboard.writeText(rawDoc);
+      flashCopy("copy-btn");
+    }
+
+    async function copyPipelineTab() {
+      if (!pipelineData) return;
+      var map = { ticket: "ticket", git: "git_summary", docs: "documentation", report: "final_report" };
+      var text = pipelineData[map[currentPipelineTab]] || "";
+      await navigator.clipboard.writeText(text);
+      flashCopy("pcopy-btn");
+    }
+
+    function flashCopy(btnId) {
+      var btn = document.getElementById(btnId);
+      var orig = btn.innerHTML;
+      btn.textContent = "Copied!";
+      setTimeout(function() { btn.innerHTML = orig; }, 2000);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    function setLoading(loading) {
+      var btn = document.getElementById("run-btn");
+      btn.disabled = loading;
+      document.getElementById("btn-spinner").classList.toggle("hidden", !loading);
+      var label = loading ? (mode === "pipeline" ? "Running pipeline…" : "Generating…")
+                          : (mode === "pipeline" ? "Run Pipeline" : "Generate Documentation");
+      document.getElementById("btn-text").textContent = label;
+    }
+
+    function setStatus(msg, cls) {
+      var badge = document.getElementById("status-badge");
+      if (!msg) { badge.classList.add("hidden"); return; }
+      badge.className = "text-xs px-2.5 py-1 rounded-full font-medium " + cls;
+      badge.textContent = msg;
+      badge.classList.remove("hidden");
+    }
+
+    function showError(msg) {
+      var card = document.getElementById("error-card");
+      card.textContent = "Error: " + msg;
+      card.classList.remove("hidden");
+    }
+
+    document.getElementById("file-path").addEventListener("keydown", function(e) {
+      if (e.key === "Enter") run();
+    });
+  </script>
+</body>
+</html>
