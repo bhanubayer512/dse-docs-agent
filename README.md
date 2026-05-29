@@ -7,27 +7,24 @@ user-facing docs and raises a PR to the central nexus repo.
 
 ## How it works
 
-```
-git push origin feature/my-feature
-        │
-        ▼
- .git/hooks/post-push  ──►  run_agent.py
-                                  │
-                          agents/doc_pipeline.py
-                          (single Strands agent)
-                                  │
-             ┌────────────────────┼─────────────────────┐
-             ▼                    ▼                     ▼
-   USER_STORY.md          git log / diff          open PR details
-                                  │
-                    reads nexus structure
-                    decides doc placement
-                    writes dual-audience doc
-                                  │
-                          nexus_writer.py
-                    branch → commit → gh pr create
-                                  │
-                          PR opened in nexus ✓
+```mermaid
+flowchart LR
+    A([🖊️ Developer\nwrites USER_STORY.md\n& pushes branch]) --> B
+
+    subgraph AGENT ["🤖  DSE Docs Agent  (AWS Bedrock · Claude Haiku)"]
+        B[📝 Read\nUSER_STORY.md\n+ Ticket No.] --> C[🔀 Git Log\n& Diff]
+        C --> D[🔗 Open PR\nDetails]
+        D --> E[🗂️ Scan Nexus\nRepo Structure]
+        E --> F[✍️ Generate\nDual-Audience Doc]
+    end
+
+    F --> G([📄 Doc written\nto nexus repo])
+    G --> H([🚀 PR raised\nto ph-rnd-dse-nexus])
+    H --> I([✅ Review &\nMerge])
+
+    style AGENT fill:#f0fdf4,stroke:#86efac,stroke-width:1.5px
+    style A fill:#eff6ff,stroke:#93c5fd
+    style I fill:#fef9c3,stroke:#fde047
 ```
 
 ---

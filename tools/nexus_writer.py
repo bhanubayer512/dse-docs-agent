@@ -131,7 +131,7 @@ def write_doc_and_raise_pr(
         if not pr_url and result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
 
-        return {"success": True, "pr_url": pr_url, "doc_path": doc_path}
+        return {"success": True, "pr_url": pr_url, "doc_path": doc_path, "doc_content": doc_content}
 
     except subprocess.CalledProcessError as exc:
         return {
@@ -152,17 +152,46 @@ def _run(cmd: list[str], cwd: str) -> None:
 
 
 def _get_default_branch(repo_path: str) -> str:
-    """Return the remote default branch name (main / master / etc.)."""
+    """Return the remote default branch name (dev / main / master / etc.).
+
+    Resolution order:
+    1. git symbolic-ref refs/remotes/origin/HEAD  (set when repo was cloned)
+    2. gh repo view --json defaultBranchRef        (authoritative from GitHub)
+    3. Check common branch names in priority order: dev, development, main, master
+    """
+    # ── 1. symbolic-ref ───────────────────────────────────────────────────────
     result = subprocess.run(
         ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
+        cwd=repo_path, capture_output=True, text=True,
     )
     if result.returncode == 0:
-        # e.g. "refs/remotes/origin/main" → "main"
         return result.stdout.strip().split("/")[-1]
-    return "main"  # safe fallback
+
+    # ── 2. gh CLI ─────────────────────────────────────────────────────────────
+    try:
+        import json as _json
+        r = subprocess.run(
+            ["gh", "repo", "view", "--json", "defaultBranchRef"],
+            cwd=repo_path, capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            data = _json.loads(r.stdout)
+            branch = data.get("defaultBranchRef", {}).get("name", "")
+            if branch:
+                return branch
+    except Exception:
+        pass
+
+    # ── 3. Check common branch names ─────────────────────────────────────────
+    for candidate in ["dev", "development", "main", "master"]:
+        r = subprocess.run(
+            ["git", "show-ref", "--verify", f"refs/remotes/origin/{candidate}"],
+            cwd=repo_path, capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            return candidate
+
+    return "main"  # last resort fallback
 
 
 def _extract_pr_url(text: str) -> str:

@@ -47,6 +47,7 @@ def read_user_story(repo_path: str) -> dict:
         "title": "",
         "description": "",
         "acceptance_criteria": "",
+        "ticket_number": "",
         "raw": raw,
     }
 
@@ -54,6 +55,7 @@ def read_user_story(repo_path: str) -> dict:
         "title": ["## title"],
         "description": ["## description"],
         "acceptance_criteria": ["## acceptance criteria", "## acceptance_criteria"],
+        "ticket_number": ["## ticket number", "## ticket", "##ticket number", "##ticket"],
     }
 
     current_key: str | None = None

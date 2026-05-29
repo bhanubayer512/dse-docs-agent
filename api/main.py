@@ -63,6 +63,9 @@ class DocPipelineRequest(BaseModel):
 class DocPipelineResponse(BaseModel):
     status: str
     response: str = ""
+    doc_content: str = ""
+    pr_url: str = ""
+    ticket_number: str = ""
     error: str = ""
 
 

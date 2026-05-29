@@ -181,6 +181,56 @@ Complete the following steps IN ORDER — do not skip any:
 
     try:
         response = agent(prompt)
-        return {"status": "success", "response": str(response)}
+
+        # ── Extract ticket number from story ──────────────────────────────────
+        ticket_number = ""
+        try:
+            from tools.story_reader import read_user_story
+            story = read_user_story(repo_path)
+            ticket_number = story.get("ticket_number", "").strip()
+        except Exception:
+            pass
+
+        # ── Try to read the written doc back from nexus for display in the UI ─
+        doc_content = ""
+        pr_url = ""
+        try:
+            import re as _re
+            response_str = str(response)
+
+            # Extract PR URL from agent response
+            pr_match = _re.search(r"https://github\.com/\S+/pull/\d+", response_str)
+            if pr_match:
+                pr_url = pr_match.group(0)
+
+            # Look for a doc_path pattern in the agent's response
+            match = _re.search(r'[\w/\-]+\.md', response_str)
+            if match:
+                candidate = os.path.join(nexus_path, match.group(0))
+                if os.path.exists(candidate):
+                    doc_content = open(candidate, encoding="utf-8").read()
+            # Fallback: scan nexus for any file modified in the last 60s
+            if not doc_content:
+                import time as _time
+                now = _time.time()
+                for root, _, files in os.walk(nexus_path):
+                    for f in files:
+                        if f.endswith(".md"):
+                            fp = os.path.join(root, f)
+                            if now - os.path.getmtime(fp) < 60:
+                                doc_content = open(fp, encoding="utf-8").read()
+                                break
+                    if doc_content:
+                        break
+        except Exception:
+            pass
+
+        return {
+            "status": "success",
+            "response": str(response),
+            "doc_content": doc_content,
+            "pr_url": pr_url,
+            "ticket_number": ticket_number,
+        }
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
