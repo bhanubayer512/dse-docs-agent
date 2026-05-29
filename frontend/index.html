@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Docs — Multi-Agent Pipeline</title>
+  <title>DSE Docs Agent</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
@@ -75,6 +75,18 @@
     .result-stat { text-align: center; }
     .result-stat .value { font-size: 1.5rem; font-weight: 600; color: #111827; }
     .result-stat .label { font-size: 0.75rem; color: #6b7280; margin-top: 0.125rem; }
+    /* Nexus pipeline card */
+    .nexus-label { font-size: 0.75rem; font-weight: 500; color: #374151; margin-bottom: 0.375rem; display: block; }
+    .nexus-input { width: 100%; padding: 0.5rem 0.75rem; font-size: 0.8125rem; border: 1px solid #d1d5db; border-radius: 0.5rem; background: #fff; font-family: "Fira Code", monospace; color: #111827; transition: border-color 0.15s; }
+    .nexus-input:focus { outline: none; border-color: #111827; box-shadow: 0 0 0 2px rgba(17,24,39,0.08); }
+    .nexus-input::placeholder { color: #9ca3af; }
+    .nexus-btn { width: 100%; background: #0f766e; color: #fff; font-size: 0.875rem; font-weight: 500; padding: 0.625rem 1rem; border: none; border-radius: 0.5rem; cursor: pointer; transition: background 0.15s; display: flex; align-items: center; justify-content: center; gap: 0.5rem; }
+    .nexus-btn:hover:not(:disabled) { background: #0d6560; }
+    .nexus-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .nexus-result { margin-top: 1.25rem; padding: 1rem; border-radius: 0.5rem; font-size: 0.8125rem; white-space: pre-wrap; font-family: "Fira Code", monospace; line-height: 1.6; display: none; }
+    .nexus-result.success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #14532d; }
+    .nexus-result.error   { background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; }
+    .nexus-hint { font-size: 0.72rem; color: #9ca3af; margin-top: 0.375rem; }
   </style>
 </head>
 <body class="min-h-screen">
@@ -83,12 +95,13 @@
   <header class="border-b border-gray-200 bg-white sticky top-0 z-10">
     <div class="max-w-4xl mx-auto px-6 py-4 flex items-center gap-4">
       <div class="flex-1">
-        <h1 class="text-base font-semibold text-gray-900 tracking-tight">AI Docs</h1>
+        <h1 class="text-base font-semibold text-gray-900 tracking-tight">DSE Docs Agent</h1>
         <p class="text-xs text-gray-400 mt-0.5">Multi-agent documentation pipeline · AWS Bedrock</p>
       </div>
       <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
         <button class="mode-btn active" id="mode-single" onclick="setMode('single')">Single File</button>
         <button class="mode-btn inactive" id="mode-pipeline" onclick="setMode('pipeline')">Pipeline</button>
+        <button class="mode-btn inactive" id="mode-nexus" onclick="setMode('nexus')">📄 Nexus Docs</button>
       </div>
       <span id="status-badge" class="hidden text-xs px-2.5 py-1 rounded-full font-medium"></span>
     </div>
@@ -96,8 +109,8 @@
 
   <main class="max-w-4xl mx-auto px-6 py-8 space-y-6">
 
-    <!-- Input card -->
-    <div class="bg-white border border-gray-200 rounded-xl p-6">
+    <!-- Input card (single-file / pipeline modes) -->
+    <div id="input-card" class="bg-white border border-gray-200 rounded-xl p-6">
       <div class="space-y-4">
         <div>
           <label for="file-path" class="block text-sm font-medium text-gray-700 mb-1.5">Source file path</label>
@@ -200,6 +213,83 @@
     <!-- Error card -->
     <div id="error-card" class="hidden bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700"></div>
 
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         NEXUS DOCS PIPELINE CARD
+         Visible only when mode === 'nexus'
+    ════════════════════════════════════════════════════════════════════════ -->
+    <div id="nexus-card" class="hidden bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+
+      <!-- Header row -->
+      <div class="flex items-start gap-3">
+        <div class="text-2xl leading-none">📄</div>
+        <div>
+          <h2 class="text-sm font-semibold text-gray-900">Generate Nexus Documentation</h2>
+          <p class="text-xs text-gray-500 mt-0.5 leading-relaxed">
+            Reads your <code class="text-xs bg-gray-100 px-1 rounded">USER_STORY.md</code>,
+            git commits, code diff and open PR — then writes a user-friendly doc to the nexus repo
+            and raises a PR automatically.
+          </p>
+        </div>
+      </div>
+
+      <hr class="border-gray-100">
+
+      <!-- Repo path -->
+      <div>
+        <label class="nexus-label" for="n-repo">
+          Modelforge repo path
+          <span class="font-normal text-gray-400">(engineering source)</span>
+        </label>
+        <input id="n-repo" class="nexus-input" type="text"
+               value="/Users/bhanupratap.rathore/ph-rnd-dse-modelforge"
+               placeholder="/absolute/path/to/ph-rnd-dse-modelforge" />
+        <p class="nexus-hint">Must contain a <code>USER_STORY.md</code> at its root</p>
+      </div>
+
+      <!-- Nexus path -->
+      <div>
+        <label class="nexus-label" for="n-nexus">
+          Nexus repo path
+          <span class="font-normal text-gray-400">(docs destination)</span>
+        </label>
+        <input id="n-nexus" class="nexus-input" type="text"
+               value="/Users/bhanupratap.rathore/ph-rnd-dse-nexus"
+               placeholder="/absolute/path/to/ph-rnd-dse-nexus" />
+      </div>
+
+      <!-- Branch -->
+      <div>
+        <label class="nexus-label" for="n-branch">
+          Feature branch
+          <span class="font-normal text-gray-400">(leave blank to auto-detect from HEAD)</span>
+        </label>
+        <input id="n-branch" class="nexus-input" type="text"
+               placeholder="e.g. feature/batch-inference  (optional)" />
+      </div>
+
+      <!-- Info callout -->
+      <div class="rounded-lg bg-teal-50 border border-teal-100 px-4 py-3 text-xs text-teal-800 leading-relaxed">
+        <strong>What happens when you click Generate:</strong><br>
+        1. Agent reads <code>USER_STORY.md</code> → git log → git diff → open PR details<br>
+        2. Scans the nexus repo structure to find the best doc location<br>
+        3. Writes a user-friendly Markdown doc with a Technical Notes section<br>
+        4. Creates a branch in nexus, commits, and opens a PR — link shown below
+      </div>
+
+      <!-- Run button -->
+      <button id="nexus-btn" class="nexus-btn" onclick="runNexusPipeline()">
+        <svg id="nexus-spinner" class="hidden spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        <span id="nexus-btn-text">🚀 Generate &amp; Raise PR</span>
+      </button>
+
+      <!-- Result -->
+      <div id="nexus-result" class="nexus-result"></div>
+
+    </div>
+
   </main>
 
   <footer class="border-t border-gray-200 mt-16 py-6 text-center text-xs text-gray-400">
@@ -217,10 +307,18 @@
 
     function setMode(m) {
       mode = m;
-      document.getElementById("mode-single").className = "mode-btn " + (m === "single" ? "active" : "inactive");
-      document.getElementById("mode-pipeline").className = "mode-btn " + (m === "pipeline" ? "active" : "inactive");
+      var modes = ["single", "pipeline", "nexus"];
+      modes.forEach(function(id) {
+        document.getElementById("mode-" + id).className =
+          "mode-btn " + (id === m ? "active" : "inactive");
+      });
+      // Show/hide the two main card sets
+      var isNexus = (m === "nexus");
+      document.getElementById("input-card").classList.toggle("hidden", isNexus);
+      document.getElementById("nexus-card").classList.toggle("hidden", !isNexus);
       document.getElementById("pipeline-desc").classList.toggle("hidden", m !== "pipeline");
-      document.getElementById("btn-text").textContent = m === "pipeline" ? "Run Pipeline" : "Generate Documentation";
+      document.getElementById("btn-text").textContent =
+        m === "pipeline" ? "Run Pipeline" : "Generate Documentation";
       resetOutput();
     }
 
@@ -446,6 +544,79 @@
     document.getElementById("file-path").addEventListener("keydown", function(e) {
       if (e.key === "Enter") run();
     });
+
+    // ── Nexus pipeline ────────────────────────────────────────────────────────
+
+    async function runNexusPipeline() {
+      var repoPath   = document.getElementById("n-repo").value.trim();
+      var nexusPath  = document.getElementById("n-nexus").value.trim();
+      var branch     = document.getElementById("n-branch").value.trim();
+      var btn        = document.getElementById("nexus-btn");
+      var btnText    = document.getElementById("nexus-btn-text");
+      var spinner    = document.getElementById("nexus-spinner");
+      var resultDiv  = document.getElementById("nexus-result");
+
+      if (!repoPath || !nexusPath) {
+        resultDiv.className = "nexus-result error";
+        resultDiv.style.display = "block";
+        resultDiv.textContent = "❌  Please fill in both repo path and nexus path.";
+        return;
+      }
+
+      // Reset result
+      resultDiv.style.display = "none";
+      resultDiv.className = "nexus-result";
+      resultDiv.textContent = "";
+
+      // Loading state
+      btn.disabled = true;
+      spinner.classList.remove("hidden");
+      btnText.textContent = "Running pipeline… (30–90s)";
+      setStatus("Generating docs…", "bg-teal-100 text-teal-800");
+
+      try {
+        var res = await fetch("/run-pipeline", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            repo_path:  repoPath,
+            nexus_path: nexusPath,
+            branch:     branch,
+          }),
+        });
+
+        var data = await res.json();
+
+        if (data.status === "success") {
+          // Try to extract PR URL for a quick-link
+          var prMatch = (data.response || "").match(/https:\/\/github\.com\/\S+\/pull\/\d+/);
+          var prLink  = prMatch
+            ? '\n\n🔗 PR: ' + prMatch[0]
+            : "";
+          resultDiv.className = "nexus-result success";
+          resultDiv.style.display = "block";
+          resultDiv.textContent = "✅  Documentation generated successfully!" + prLink + "\n\n" + data.response;
+          setStatus("Done ✓", "bg-green-100 text-green-800");
+          setTimeout(function() { setStatus("", ""); }, 4000);
+        } else {
+          resultDiv.className = "nexus-result error";
+          resultDiv.style.display = "block";
+          resultDiv.textContent = "❌  Pipeline failed:\n\n" + (data.error || JSON.stringify(data));
+          setStatus("Failed", "bg-red-100 text-red-700");
+          setTimeout(function() { setStatus("", ""); }, 5000);
+        }
+      } catch (err) {
+        resultDiv.className = "nexus-result error";
+        resultDiv.style.display = "block";
+        resultDiv.textContent = "❌  Request failed: " + err.message;
+        setStatus("Failed", "bg-red-100 text-red-700");
+        setTimeout(function() { setStatus("", ""); }, 5000);
+      } finally {
+        btn.disabled = false;
+        spinner.classList.add("hidden");
+        btnText.textContent = "🚀 Generate & Raise PR";
+      }
+    }
   </script>
 </body>
 </html>

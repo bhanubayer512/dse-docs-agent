@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# =============================================================================
+# DSE Docs Agent — post-push hook
+# =============================================================================
+#
+# Install this hook into your modelforge repo:
+#
+#   cp /Users/bhanupratap.rathore/dse-docs-agent/hooks/post-push \
+#      /Users/bhanupratap.rathore/ph-rnd-dse-modelforge/.git/hooks/post-push
+#   chmod +x \
+#      /Users/bhanupratap.rathore/ph-rnd-dse-modelforge/.git/hooks/post-push
+#
+# The hook fires automatically after every `git push`.
+# It runs the docs agent in the BACKGROUND so your push is never delayed.
+# Watch progress with:  tail -f /tmp/dse-docs-agent.log
+# =============================================================================
+
+set -euo pipefail
+
+# ── Paths (edit if your layout differs) ──────────────────────────────────────
+AGENT_DIR="/Users/bhanupratap.rathore/dse-docs-agent"
+MODELFORGE_DIR="/Users/bhanupratap.rathore/ph-rnd-dse-modelforge"
+NEXUS_DIR="/Users/bhanupratap.rathore/ph-rnd-dse-nexus"
+LOG_FILE="/tmp/dse-docs-agent.log"
+
+# ── Detect current branch (post-push receives no arguments) ──────────────────
+BRANCH=$(git -C "$MODELFORGE_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+
+# ── Skip main / master — docs are written from feature branches only ──────────
+if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
+    echo ""
+    echo "📄  [docs-agent] Branch is '${BRANCH}' — skipping doc generation."
+    exit 0
+fi
+
+# ── Skip if no USER_STORY.md is present ──────────────────────────────────────
+if [[ ! -f "$MODELFORGE_DIR/USER_STORY.md" ]]; then
+    echo ""
+    echo "📄  [docs-agent] No USER_STORY.md found — skipping doc generation."
+    echo "    ℹ️   Tip: create USER_STORY.md at the repo root to enable auto-docs."
+    echo "    Template:"
+    echo "      ## Title"
+    echo "      <short feature name>"
+    echo "      ## Description"
+    echo "      <what this feature does>"
+    echo "      ## Acceptance Criteria"
+    echo "      - [ ] <criterion>"
+    echo ""
+    exit 0
+fi
+
+# ── All checks passed — launch the agent in the background ───────────────────
+echo ""
+echo "📄  [docs-agent] Push detected on branch: ${BRANCH}"
+echo "    Launching documentation pipeline in the background..."
+echo "    Log: tail -f ${LOG_FILE}"
+echo ""
+
+# cd into the agent directory so that Python relative imports resolve correctly.
+(
+    cd "$AGENT_DIR"
+    echo "======================================" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S')  branch=${BRANCH}" >> "$LOG_FILE"
+    echo "======================================" >> "$LOG_FILE"
+    python run_agent.py \
+        --repo   "$MODELFORGE_DIR" \
+        --nexus  "$NEXUS_DIR" \
+        --branch "$BRANCH" \
+        >> "$LOG_FILE" 2>&1
+    echo "" >> "$LOG_FILE"
+) &
+
+AGENT_PID=$!
+disown $AGENT_PID
+
+echo "    Agent PID: ${AGENT_PID}"
+echo "    The push is complete. Docs will be generated shortly."
+echo ""

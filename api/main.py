@@ -1,8 +1,10 @@
 """FastAPI app — single-file doc generation and full multi-agent pipeline."""
+import asyncio
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +13,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from agents.doc_agent import generate_docs
 from agents.orchestrator import run_pipeline, PipelineResult
+
+# Thread pool for running synchronous Bedrock/Strands calls without blocking the event loop
+_executor = ThreadPoolExecutor(max_workers=2)
 
 app = FastAPI(
     title="AI Doc Authoring API",
@@ -42,6 +47,23 @@ class GenerateResponse(BaseModel):
 
 class PipelineRequest(BaseModel):
     file_path: str
+
+
+# ── Doc Pipeline (nexus) models ───────────────────────────────────────────────
+
+DEFAULT_NEXUS_PATH = "/Users/bhanupratap.rathore/ph-rnd-dse-nexus"
+
+
+class DocPipelineRequest(BaseModel):
+    repo_path: str
+    nexus_path: str = DEFAULT_NEXUS_PATH
+    branch: str = ""
+
+
+class DocPipelineResponse(BaseModel):
+    status: str
+    response: str = ""
+    error: str = ""
 
 
 class AgentStepOut(BaseModel):
@@ -102,3 +124,32 @@ def pipeline(req: PipelineRequest):
         elapsed_seconds=result.elapsed_seconds,
         error=result.error,
     )
+
+
+@app.post("/run-pipeline", response_model=DocPipelineResponse)
+async def run_doc_pipeline(req: DocPipelineRequest):
+    """Nexus doc pipeline: reads story + git + PR context, writes doc to nexus, raises PR.
+
+    Runs the synchronous Strands/Bedrock agent in a thread-pool executor so it
+    does not block the FastAPI event loop.
+    """
+    if not Path(req.repo_path).is_dir():
+        raise HTTPException(status_code=404, detail=f"repo_path not found: {req.repo_path}")
+    if not Path(req.nexus_path).is_dir():
+        raise HTTPException(status_code=404, detail=f"nexus_path not found: {req.nexus_path}")
+
+    from agents.doc_pipeline import run_doc_pipeline as _run  # deferred import
+
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            _executor,
+            lambda: _run(
+                repo_path=req.repo_path,
+                nexus_path=req.nexus_path,
+                branch=req.branch,
+            ),
+        )
+        return DocPipelineResponse(**result)
+    except Exception as exc:
+        return DocPipelineResponse(status="error", error=str(exc))
