@@ -1,0 +1,240 @@
+"""Tools for creating PRs in the docs repo and extracting Azure ticket info."""
+import os
+import re
+import subprocess
+from pathlib import Path
+from strands import tool
+
+
+@tool
+def extract_ticket_id(branch_name: str) -> str:
+    """Extract Azure DevOps ticket ID from a branch name.
+
+    Looks for patterns like AB-524067, AB#524067, etc.
+
+    Args:
+        branch_name: The git branch name.
+
+    Returns:
+        The ticket ID if found, or empty string.
+    """
+    patterns = [
+        r'AB[#-](\d+)',      # AB-524067 or AB#524067
+        r'ab[#-](\d+)',      # lowercase
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, branch_name, re.IGNORECASE)
+        if match:
+            return f"AB#{match.group(1)}"
+    return ""
+
+
+def create_docs_pr(
+    docs_repo_path: str,
+    branch_name: str,
+    ticket_id: str,
+    generated_docs: str,
+    source_branch: str,
+) -> dict:
+    """Create a PR in the docs repo with the generated documentation.
+
+    Steps:
+      1. Parse generated docs into individual files
+      2. Create a new branch in the docs repo
+      3. Write the generated doc files
+      4. Commit and push
+      5. Return the PR creation URL
+
+    Args:
+        docs_repo_path: Path to the docs repo.
+        branch_name: Name for the new branch (e.g., ai-docs/AB-524067).
+        ticket_id: Azure ticket ID for the commit message.
+        generated_docs: Raw generated docs output from the AI agent.
+        source_branch: The source code branch that triggered this.
+
+    Returns:
+        Dict with status, branch, files_written, and pr_url.
+    """
+    docs_repo = Path(docs_repo_path).resolve()
+    if not (docs_repo / ".git").exists():
+        return {"status": "error", "message": f"{docs_repo} is not a git repository"}
+
+    # Parse the generated docs into file blocks
+    files_to_write = _parse_generated_docs(generated_docs)
+    if not files_to_write:
+        return {"status": "error", "message": "No doc files could be parsed from generated output"}
+
+    # Get the default branch to branch from
+    default_branch = _get_default_branch(docs_repo)
+
+    # Create a new branch
+    safe_branch = re.sub(r'[^a-zA-Z0-9_\-/]', '-', branch_name)
+    new_branch = f"ai-docs/{safe_branch}"
+
+    try:
+        # Fetch latest and create branch
+        subprocess.run(["git", "fetch", "origin"], cwd=str(docs_repo), capture_output=True)
+        subprocess.run(
+            ["git", "checkout", "-b", new_branch, f"origin/{default_branch}"],
+            cwd=str(docs_repo), capture_output=True, check=True
+        )
+    except subprocess.CalledProcessError as e:
+        # Branch might already exist, try checking it out
+        try:
+            subprocess.run(
+                ["git", "checkout", new_branch],
+                cwd=str(docs_repo), capture_output=True, check=True
+            )
+        except subprocess.CalledProcessError:
+            return {"status": "error", "message": f"Failed to create branch: {e.stderr}"}
+
+    # Write the doc files
+    written_files = []
+    for file_info in files_to_write:
+        file_path = docs_repo / file_info["path"]
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(file_info["content"])
+        written_files.append(file_info["path"])
+        # Stage the file
+        subprocess.run(["git", "add", str(file_path)], cwd=str(docs_repo), capture_output=True)
+
+    # Check if there are actual changes to commit
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=str(docs_repo), capture_output=True, text=True)
+    if not status.stdout.strip():
+        # Switch back to default branch
+        subprocess.run(["git", "checkout", default_branch], cwd=str(docs_repo), capture_output=True)
+        return {"status": "error", "message": "No changes to commit — generated docs match existing content"}
+
+    # Commit
+    commit_msg = f"docs: AI-generated documentation update"
+    if ticket_id:
+        commit_msg += f" [{ticket_id}]"
+    commit_msg += f"\n\nAuto-generated from source branch: {source_branch}"
+    commit_msg += f"\n\nFiles updated:\n" + "\n".join(f"- {f}" for f in written_files)
+
+    subprocess.run(
+        ["git", "commit", "-m", commit_msg],
+        cwd=str(docs_repo), capture_output=True
+    )
+
+    # Try to push
+    push_result = subprocess.run(
+        ["git", "push", "-u", "origin", new_branch],
+        cwd=str(docs_repo), capture_output=True, text=True
+    )
+
+    # Build PR title and body
+    if ticket_id:
+        pr_title = f"docs: AI-generated update for {ticket_id}"
+    else:
+        pr_title = f"docs: AI-generated update from {source_branch}"
+
+    pr_body = f"## Summary\n"
+    pr_body += f"- Auto-generated documentation update from source branch: `{source_branch}`\n"
+    if ticket_id:
+        pr_body += f"- Azure DevOps Ticket: **{ticket_id}**\n"
+    pr_body += f"\n## Files Updated\n"
+    pr_body += "\n".join(f"- `{f}`" for f in written_files)
+    pr_body += "\n\n---\n_Generated by AI Doc Authoring Agent_"
+
+    pr_url = ""
+
+    if push_result.returncode == 0:
+        # Try to create PR using gh CLI
+        gh_result = subprocess.run(
+            ["gh", "pr", "create",
+             "--title", pr_title,
+             "--body", pr_body,
+             "--base", default_branch,
+             "--head", new_branch],
+            cwd=str(docs_repo), capture_output=True, text=True
+        )
+        if gh_result.returncode == 0:
+            pr_url = gh_result.stdout.strip()
+        else:
+            # Fallback: build manual PR URL
+            remote_url = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=str(docs_repo), capture_output=True, text=True
+            ).stdout.strip()
+            if "github.com" in remote_url:
+                repo_path = remote_url.replace("https://github.com/", "").replace(".git", "")
+                pr_url = f"https://github.com/{repo_path}/compare/{default_branch}...{new_branch}?expand=1"
+
+    # Switch back to default branch
+    subprocess.run(["git", "checkout", default_branch], cwd=str(docs_repo), capture_output=True)
+
+    result = {
+        "status": "success" if push_result.returncode == 0 else "push_failed",
+        "branch": new_branch,
+        "files_written": written_files,
+        "commit_message": commit_msg,
+        "pr_url": pr_url,
+    }
+    if push_result.returncode != 0:
+        result["push_error"] = push_result.stderr
+        result["message"] = "Branch created and committed locally but push failed. You may need to push manually."
+
+    return result
+
+
+def _parse_generated_docs(generated_docs: str) -> list[dict]:
+    """Parse the AI-generated docs output into individual file blocks.
+
+    Expects format:
+      ## [UPDATE|NEW]: <file_path>
+      <content>
+      ---
+    """
+    files = []
+
+    # Try structured format first
+    pattern = r'##\s*\[(UPDATE|NEW)\]:\s*(.+?)(?:\n)(.*?)(?=\n##\s*\[(?:UPDATE|NEW)\]:|---\s*$|\Z)'
+    matches = re.finditer(pattern, generated_docs, re.DOTALL)
+
+    for match in matches:
+        action = match.group(1).strip()
+        path = match.group(2).strip()
+        content = match.group(3).strip()
+
+        # Clean up path — remove leading docs/ if it starts with docs/docs/
+        if path.startswith("docs/docs/"):
+            path = path[5:]
+        elif not path.startswith("docs/"):
+            path = f"docs/{path}"
+
+        files.append({
+            "action": action,
+            "path": path,
+            "content": content,
+        })
+
+    # If no structured format found, create a single doc
+    if not files and generated_docs.strip():
+        files.append({
+            "action": "NEW",
+            "path": "docs/ai-generated-update.md",
+            "content": generated_docs.strip(),
+        })
+
+    return files
+
+
+def _get_default_branch(repo_path: Path) -> str:
+    """Get the default branch name of a repo."""
+    result = subprocess.run(
+        ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+        cwd=str(repo_path), capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        return result.stdout.strip().split("/")[-1]
+
+    # Fallback: check if main or master exists
+    for branch in ["main", "master"]:
+        check = subprocess.run(
+            ["git", "rev-parse", "--verify", f"origin/{branch}"],
+            cwd=str(repo_path), capture_output=True
+        )
+        if check.returncode == 0:
+            return branch
+    return "main"
