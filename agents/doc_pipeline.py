@@ -185,8 +185,8 @@ Complete the following steps IN ORDER — do not skip any:
         # ── Extract ticket number from story ──────────────────────────────────
         ticket_number = ""
         try:
-            from tools.story_reader import read_user_story
-            story = read_user_story(repo_path)
+            from tools.story_reader import read_user_story as _read_story
+            story = _read_story(repo_path)
             ticket_number = story.get("ticket_number", "").strip()
         except Exception:
             pass

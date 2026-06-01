@@ -126,7 +126,20 @@ def write_doc_and_raise_pr(
         )
         # ``gh pr create`` exits 1 with the existing PR URL if a PR already
         # exists for this branch — extract the URL either way.
-        pr_url = _extract_pr_url(result.stdout + result.stderr)
+        combined = result.stdout + result.stderr
+        pr_url = _extract_pr_url(combined)
+
+        if not pr_url:
+            # Try fetching existing PR URL via gh pr view as a fallback
+            try:
+                r2 = subprocess.run(
+                    ["gh", "pr", "view", branch_name, "--json", "url", "-q", ".url"],
+                    cwd=nexus_path, capture_output=True, text=True,
+                )
+                if r2.returncode == 0:
+                    pr_url = r2.stdout.strip()
+            except Exception:
+                pass
 
         if not pr_url and result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
